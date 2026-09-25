@@ -1,0 +1,4 @@
+condition,body_mass_kg,walk_time_s,total_time_s,distance_m,mean_walk_speed_m_s,mean_RQ_walk,n_interp_VO2,n_interp_VCO2,standing_J_per_s,net_total_J_kg,net_rate_W_kg,CoT_J_kg_per_m_s,standing_mLO2_per_s,net_total_mLO2_kg,net_rate_mL_kg_min,CoT_mLO2_kg_per_m_s,net_total_J_kg_pct_vs_NoExo,net_rate_W_kg_pct_vs_NoExo,CoT_J_kg_per_m_s_pct_vs_NoExo,net_total_mLO2_kg_pct_vs_NoExo,net_rate_mL_kg_min_pct_vs_NoExo,CoT_mLO2_kg_per_m_s_pct_vs_NoExo
+NoExo,72.4000,357.1100,535.3900,296.5486,0.8304,0.8166,3,4,98.7096,2823.5343,7.9066,3400.1590,4.9432,138.4648,23.2642,166.7422,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+ExoOff,72.4000,378.2300,557.8600,296.5486,0.7840,0.8757,9,8,98.7096,3057.8935,8.0847,3900.1604,4.9432,147.5680,23.4093,188.2142,8.3002,2.2528,14.7052,6.5744,0.6234,12.8774
+ExoOn,72.4000,359.4800,538.6100,296.5486,0.8249,0.8332,6,3,98.7096,2755.7269,7.6659,3340.5275,4.9432,134.3429,22.4229,162.8522,-2.4015,-3.0450,-1.7538,-2.9769,-3.6165,-2.3329

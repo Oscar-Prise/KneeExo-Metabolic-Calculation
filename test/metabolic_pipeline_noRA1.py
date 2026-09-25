@@ -1,4 +1,14 @@
 """
+TEST VARIANT - RA1 excluded.
+
+Copy of ../metabolic_pipeline.py where every trial starts at the end of the first ramp
+bout (RA1): time is re-zeroed to the start of RA2, RA1 distance and time are dropped,
+and integration runs from the start of RA2 to the end of the 3-min standing. This tests
+whether the unrested start (e.g. Sep25 ExoOn) drives the condition differences.
+Reads the original K5 files, does not write any _edit.xlsx, and saves all outputs to
+test/<day>/.
+
+Original description:
 Outdoor metabolic / cost-of-transport pipeline (after Slade et al., Nature 2022).
 
 Method
@@ -52,7 +62,7 @@ STAIR_DIST_M = np.hypot(STAIR_RUN_IN, STAIR_RISE_IN) * IN2M  # hypotenuse of one
 # Bout.txt has 8 laps: 7 walking bouts followed by 3 min of quiet standing.
 # RA = ramp, SA = stair ascent, SD = stair descent.
 WALK_SEGMENTS = [
-    ("RA1", 288 * FT2M),
+    # RA1 (288 ft) excluded in this test variant
     ("RA2", 533 * FT2M),
     ("SA1", STAIR_DIST_M),
     ("SD1", STAIR_DIST_M),
@@ -66,6 +76,7 @@ SEG_DISTS = [d for _, d in WALK_SEGMENTS] + [0.0]
 
 CONDITIONS = ["NoExo", "ExoOff", "ExoOn"]
 REFERENCE = "NoExo"
+OUT_ROOT = Path(__file__).resolve().parent  # outputs go to test/<day>/
 BASELINE_WINDOW_S = 180.0
 DESPIKE_WINDOW = 5  # breaths
 DESPIKE_SD = 4.0
@@ -182,8 +193,7 @@ def load_trial(path: Path, name: str) -> tuple[pd.DataFrame, pd.DataFrame, dict,
     """Read a K5 file, despike it, save the _edit copy. Returns (raw, edited, flags, mass)."""
     raw, mass = read_k5(path)
     edited, flags = despike(raw, name)
-    write_edit_xlsx(path, edited, flags)
-    return raw, edited, flags, mass
+    return raw, edited, flags, mass  # test variant: no _edit.xlsx written
 
 
 def clean_breaths(df: pd.DataFrame, name: str) -> pd.DataFrame:
@@ -243,8 +253,8 @@ def standing_baseline(df: pd.DataFrame, signal: np.ndarray) -> float:
 
 
 def process_day(day: Path) -> None:
-    data_dir, out_dir = day / "Data", day / "Output"
-    out_dir.mkdir(exist_ok=True)
+    data_dir, out_dir = day / "Data", OUT_ROOT / day.name
+    out_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {day.name} ===")
 
     _, stand_df, _, mass = load_trial(data_dir / "Standing.xlsx", "Standing")
@@ -267,8 +277,14 @@ def process_day(day: Path) -> None:
         raw, edited, flags, _ = load_trial(data_dir / f"{cond}.xlsx", cond)
         df = clean_breaths(edited, cond)
         ends = bouts[cond].copy()
-        if len(ends) != len(SEG_LABELS):
-            raise ValueError(f"{cond}: expected {len(SEG_LABELS)} laps, got {len(ends)}")
+        if len(ends) != len(SEG_LABELS) + 1:
+            raise ValueError(f"{cond}: expected {len(SEG_LABELS) + 1} laps, got {len(ends)}")
+        # Drop RA1: re-zero time to the start of RA2. Breaths before 0 are kept only so
+        # the 1 Hz interpolation at t=0 is correct; they are never integrated or plotted.
+        t_ra1 = ends[0]
+        ends = ends[1:] - t_ra1
+        for d in (raw, edited, df):
+            d["t"] = d["t"] - t_ra1
         k5_end = df["t"].iloc[-1]
         if k5_end < ends[-1]:
             # K5 stopped before the stopwatch: clip the final standing lap to the K5 end
@@ -290,7 +306,7 @@ def process_day(day: Path) -> None:
             "condition": cond, "body_mass_kg": mass,
             "walk_time_s": t_walk, "total_time_s": t_end,
             "distance_m": walk_dist, "mean_walk_speed_m_s": speed,
-            "mean_RQ_walk": float(df.loc[df["t"] <= t_walk, "RQ"].mean()),
+            "mean_RQ_walk": float(df.loc[df["t"].between(0, t_walk), "RQ"].mean()),
             "n_interp_VO2": int(flags["VO2"].sum()), "n_interp_VCO2": int(flags["VCO2"].sum()),
         }
         seg_cols = {lab: {} for lab in SEG_LABELS}
@@ -379,13 +395,13 @@ def plot_rq(rq_series, seg_speeds, title, path):
         style(ax)
         shade_segments(ax, ends, seg_speeds[cond])
         ax.axhline(1.0, color=TEXT2, linewidth=0.8, linestyle="--")
-        m = t <= ends[-1]
+        m = (t >= 0) & (t <= ends[-1])
         ax.plot(t[m], rq[m], color=COLORS[cond], linewidth=2)
         ax.set_ylabel("RQ (VCO₂/VO₂)")
         ax.text(0.005, 0.95, cond, transform=ax.transAxes, fontsize=10, fontweight="bold",
                 color=TEXT, va="top")
     axes[-1].set_xlabel("Time (s)")
-    fig.suptitle(f"{title} - respiratory quotient per breath (dashed = 1.0; lap mean speed shown)",
+    fig.suptitle(f"{title} [RA1 excluded] - respiratory quotient per breath (dashed = 1.0; lap mean speed shown)",
                  color=TEXT, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(path, dpi=200, facecolor=SURFACE)
@@ -404,10 +420,11 @@ def plot_cumulative(series, spec, title, path):
                     textcoords="offset points", va="center", fontsize=9, color=TEXT)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel(f"Cumulative net {spec['label']} ({spec['total']})")
-    ax.set_title(f"{title} - cumulative net {spec['label']} (dot = end of walking)",
+    ax.set_title(f"{title} [RA1 excluded] - cumulative net {spec['label']} (dot = end of walking)",
                  color=TEXT, fontsize=11, loc="left")
     ax.legend(frameon=False, fontsize=9, labelcolor=TEXT2, loc="upper left")
     ax.margins(x=0.2)
+    ax.set_xlim(left=0)
     fig.tight_layout()
     fig.savefig(path, dpi=200, facecolor=SURFACE)
     plt.close(fig)
@@ -435,7 +452,7 @@ def plot_summary(summ, spec, title, path):
     fig, axes = new_fig(1, 2, figsize=(10, 4.2))
     bar_panel(axes[0], summ, f"CoT_{k}_kg_per_m_s", f"Cost of transport ({spec['cot']})", "{:.0f}")
     bar_panel(axes[1], summ, rate_name(spec), f"Net rate over walking time ({spec['rate']})", "{:.2f}")
-    fig.suptitle(f"{title} - {spec['label']} (% change vs {REFERENCE})",
+    fig.suptitle(f"{title} [RA1 excluded] - {spec['label']} (% change vs {REFERENCE})",
                  color=TEXT, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(path, dpi=200, facecolor=SURFACE)
@@ -466,7 +483,7 @@ def plot_bouts(segs, spec, title, path):
         ax.set_ylim(0, np.nanmax(walk[col]) * 1.18)
     axes[0].legend(frameon=False, fontsize=8.5, labelcolor=TEXT2, ncol=n, loc="upper right")
     axes[-1].set_xticks(x, bouts)
-    fig.suptitle(f"{title} - bout comparison, {spec['label']} "
+    fig.suptitle(f"{title} [RA1 excluded] - bout comparison, {spec['label']} "
                  f"(energy within each bout only; recovery standing not attributed)",
                  color=TEXT, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
@@ -486,12 +503,12 @@ def plot_gas(gas_series, title, path):
         shade_segments(ax, ends, [])
         bounds = np.concatenate([[0.0], ends])
         for gas, c in GAS_COLORS.items():
-            r = raw["t"] <= ends[-1]
-            m = df["t"] <= ends[-1]
+            r = raw["t"].between(0, ends[-1])
+            m = df["t"].between(0, ends[-1])
             ax.plot(raw.loc[r, "t"], raw.loc[r, gas] / 1000, color=c, linewidth=1, alpha=0.35)
             ax.plot(df.loc[m, "t"], df.loc[m, gas] / 1000, color=c, linewidth=2,
                     label=f"{GAS_LABELS[gas]} (despiked)")
-            f = flags[gas] & (raw["t"] <= ends[-1]).to_numpy()
+            f = flags[gas] & r.to_numpy()
             ax.plot(raw.loc[f, "t"], raw.loc[f, gas] / 1000, "o", color=c, markersize=7,
                     markerfacecolor="none", markeredgewidth=1.5)
             ax.plot(raw.loc[f, "t"], df.loc[f, gas] / 1000, "o", color=c, markersize=5,
@@ -510,7 +527,7 @@ def plot_gas(gas_series, title, path):
     axes[0].plot([], [], "o", color=TEXT2, markerfacecolor="none", label="interpolated breath (raw ○, new ●)")
     axes[0].legend(frameon=False, fontsize=8, labelcolor=TEXT2, ncol=4, loc="upper right")
     axes[-1].set_xlabel("Time (s)")
-    fig.suptitle(f"{title} - VO₂ and VCO₂ per breath (values labelled at each lap boundary)",
+    fig.suptitle(f"{title} [RA1 excluded] - VO₂ and VCO₂ per breath (values labelled at each lap boundary)",
                  color=TEXT, fontsize=11, x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(path, dpi=200, facecolor=SURFACE)
@@ -519,7 +536,7 @@ def plot_gas(gas_series, title, path):
 
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    root = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent
     days = [root / a for a in sys.argv[1:]] or sorted(
         d for d in root.iterdir() if (d / "Data" / "Bout.txt").exists())
     for d in days:
